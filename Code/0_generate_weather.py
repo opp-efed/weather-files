@@ -12,7 +12,7 @@ def read_cdf(path):
     return xr.open_dataset(path).to_dataframe()
 
 
-def map_stations(precip_path, bounds=None, sample_year=1990):
+def map_stations(precip_path, id_field, bounds=None, sample_year=1990):
     """ Use a representative precip file to assess the number of precipitation stations """
 
     # Read file and adjust longitude
@@ -29,19 +29,25 @@ def map_stations(precip_path, bounds=None, sample_year=1990):
 
     # Sort values and add an index
     precip_table = \
-        precip_table[['lat', 'lon']].drop_duplicates().sort_values(['lat', 'lon'])
+        precip_table[['lat', 'lon']].drop_duplicates().sort_values(['lat', 'lon']).reset_index(drop=True)
 
-    return precip_table.reset_index(drop=True)
+    precip_table[id_field] = np.arange(precip_table.shape[0]) + 1
+    return precip_table.set_index(id_field)
 
 
 class WeatherCubeGenerator(WeatherCube):
     def __init__(self, scratch_path, years, ncep_vars, ncep_path, precip_path, bounds, precip_points):
 
         super(WeatherCubeGenerator, self).__init__(scratch_path, years, precip_points)
-        self.years = years
-        self.precip_points = pd.DataFrame(precip_points, columns=['lat', 'lon'])
-        self.populate(ncep_vars, ncep_path, precip_path, bounds)
         self.write_key()
+
+        # self.populate(ncep_vars, ncep_path, precip_path, bounds)
+
+    def write_key(self):
+        # Write key files
+        self.precip_points.to_csv(self.key_path)
+        with open(self.dates_path, 'w') as f:
+            f.write(",".join(map(str, self.years)))
 
     @staticmethod
     def perform_interpolation(daily_precip, daily_ncep, date):
@@ -141,27 +147,22 @@ class WeatherCubeGenerator(WeatherCube):
         precip_table = self.precip_points.merge(precip_table, how='left', on=['lat', 'lon'])
         return precip_table
 
-    def write_key(self):
-        np.savez_compressed(self.key_path, points=self.precip_points, years=np.array(self.years))
-
 
 def main():
-    from paths import met_data_path, met_grid_path, metfile_path
-
+    from paths import input_path
     ncep_vars = ["tmin.2m", "tmax.2m", "air.2m", "dswrf.ntat", "uwnd.10m", "vwnd.10m"]
-    ncep_path = os.path.join(met_data_path, "{}.gauss.{}.nc")  # var, year
-    precip_path = os.path.join(met_data_path, "precip.V1.0.{}.nc")  # year
+    ncep_path = os.path.join(input_path, "{}.gauss.{}.nc")  # var, year
+    precip_path = os.path.join(input_path, "precip.V1.0.{}.nc")  # year
 
     # Specify run parameters
     years = range(1961, 2017)
     bounds = [20, 60, -130, -60]  # min lat, max lat, min long, max long
-    precip_points = None
+
     # Get the coordinates for all precip stations being used and write to file
-    #precip_points = map_stations(precip_path, bounds)
-    #precip_points.to_csv(met_grid_path, index_label='weather_grid')
+    precip_points = map_stations(precip_path, 'weather_grid', bounds)
 
     # Process all weather and store to memory
-    WeatherCubeGenerator(metfile_path, years, ncep_vars, ncep_path, precip_path, bounds, precip_points)
+    WeatherCubeGenerator(years, ncep_vars, ncep_path, precip_path, bounds, precip_points)
 
 
 if __name__ == '__main__':
